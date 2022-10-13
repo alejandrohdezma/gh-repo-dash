@@ -1,0 +1,156 @@
+#!/bin/bash
+
+EXTENSION_PATH=$(dirname "$0")
+
+display_help() {
+    echo "Usage: gh repo-dash [option...] ORGANIZATION" >&2
+    echo
+    echo '   -q, --query QUERY       The query to use when searching repositories. It is always prepended with the'
+    echo '                           organization. Check https://docs.github.com/en/search-github/searching-on-github/searching-for-repositories'
+    echo '                           for more information.'
+    echo '   -c, --cache duration    Cache the responses from GitHub, e.g. "3600s", "60m", "1h". Defaults to 1h'
+    echo '   -h, --help              Show this help message'
+    echo
+}
+
+# Makes a string passed as argument pink
+pink() {
+    gum style --foreground 212 "$1"
+}
+
+append_data_for_repository() {
+    local repo="$1"
+    local cache="$2"
+    local list="$3"
+
+    title="Retrieving data for $(pink "$repo")"
+    repository_info=$(gum spin --title="$title" --show-output -- "$EXTENSION_PATH/get-repo-info.sh" "$repo" "$cache")
+
+    echo $list | jq -c "del(.[] | select(.name == \"$repo\")) | . += [$repository_info]"
+}
+
+# Shows a table with the information from repositories and lets you perform different actions based on
+# selection.
+#
+# Parameters:
+#    LIST: JSON array containing the list of repositories to show in the format:
+#      [
+#        {
+#          "name": "my-org/my-repo",
+#          "latest_tag": "v1.0.0",
+#          "default_branch": "main",
+#          "commits_since_latest_tag": 42
+#        }
+#      ]
+#
+# Information for a single repo can be obtained calling `get-repo-info.sh` "my-org/my-repo" $CACHE
+run() {
+    local list="$1"
+    local organization="$2"
+    local cache="$3"
+
+    csv=$(echo $list | jq -r 'sort_by(.commits_since_latest_tag) | reverse | .[] | [(.name | capture(".*/(?<repo>.*)").repo),.description,.latest_tag,.commits_since_latest_tag] | @csv')
+
+    clear
+
+    repository=$(gum table --columns="Repository","Description","Latest Tag","Changes since ⬅" --widths=20,30,15,16 <<<"$csv" | cut -d ',' -f1)
+
+    if [ -z $repository ]; then
+        exit 1
+    fi
+
+    repository="$organization/$repository"
+
+    echo "What do you want do with $(pink "$repository")"
+    selection=$(gum choose "Open repository in GitHub" "Open releases" "See changes since latest release" "Draft new release")
+
+    clear
+
+    case $selection in
+    "Open repository in GitHub")
+        open "https://github.com/$repository"
+        ;;
+    "Open releases")
+        open "https://github.com/$repository/releases"
+        ;;
+    "See changes since latest release")
+        default_branch=$(jq -r ".[] | select(.name==\"$repository\") | .default_branch" <<<"$list")
+        tag=$(jq -r ".[] | select(.name==\"$repository\") | .latest_tag" <<<"$list")
+        open "https://github.com/$repository/compare/$tag...$default_branch"
+        ;;
+    "Draft new release")
+        open "https://github.com/$repository/releases/new"
+        ;;
+    *) exit 1 ;;
+
+    esac
+
+    gum confirm "Do you want to see the list again?" &&
+        LIST=$(append_data_for_repository "$repository" "0" "$list") &&
+        run "$list" "$organization" "$cache" || exit 0
+}
+
+CACHE="1h"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    -c | --cache)
+        CACHE="$2"
+        shift
+        shift
+        ;;
+    -q | --query)
+        QUERY="$2"
+        shift
+        shift
+        ;;
+    -h | --help)
+        display_help
+        exit 0
+        ;;
+    -* | --*)
+        echo "Unknown option $1"
+        display_help
+        exit 1
+        ;;
+    *)
+        ORGANIZATION="$1"
+        shift
+        ;;
+    esac
+done
+
+if [ -z $ORGANIZATION ]; then
+    echo "Missing ORGANIZATION"
+    display_help
+    exit 1
+fi
+
+if [ -z $QUERY ]; then
+    QUERY="org:$ORGANIZATION"
+else
+    QUERY="org:$ORGANIZATION+$QUERY"
+fi
+
+repositories=$(
+    gum spin --title "Loading $(pink "repositories")" --show-output -- \
+        gh api --paginate --cache "$CACHE" "search/repositories?q=$QUERY" | jq '.items | map(.name)'
+)
+
+if [[ "$repositories" == "[]" ]]; then
+    echo "No repositories found. Maybe try a different query?"
+    exit 0
+fi
+
+list="[]"
+
+while IFS= read -r repo; do
+    list=$(append_data_for_repository "$ORGANIZATION/$repo" "$CACHE" "$list")
+done <<<"$(echo $repositories | jq -r '.[]')"
+
+if [[ "$list" == "[]" ]]; then
+    echo "Something went wrong when retrieving the repositories information, please try again in a few minutes"
+    exit 0
+fi
+
+run "$list" "$ORGANIZATION" "$CACHE"

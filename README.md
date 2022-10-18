@@ -2,7 +2,7 @@
 
 It shows the repositories for a certain organization with their latest tag and the number of commits in the default branch since that tag.
 
-![](demo.svg)
+![](example.svg)
 
 ## Installation
 

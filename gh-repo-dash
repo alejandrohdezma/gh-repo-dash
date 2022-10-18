@@ -49,11 +49,11 @@ run() {
     local organization="$2"
     local cache="$3"
 
-    csv=$(echo $list | jq -r 'sort_by(.commits_since_latest_tag) | reverse | .[] | [(.name | capture(".*/(?<repo>.*)").repo),.description,.latest_tag,.commits_since_latest_tag] | @csv')
+    csv=$(echo $list | jq -r 'sort_by(.commits_since_latest_tag) | reverse | .[] | [(.name | capture(".*/(?<repo>.*)").repo),.description,.latest_tag,.published_at,.commits_since_latest_tag] | @csv')
 
     clear
 
-    repository=$(gum table --columns="Repository","Description","Latest Tag","Changes since ⬅" --widths=20,30,15,16 <<<"$csv" | cut -d ',' -f1)
+    repository=$(gum table --columns="Repository","Description","Latest Tag","Published","Changes since ⬅" --widths=20,30,15,15,16 <<<"$csv" | cut -d ',' -f1)
 
     if [ -z $repository ]; then
         exit 1

@@ -18,6 +18,27 @@ pink() {
     gum style --foreground 212 "$1"
 }
 
+parse_semver() {
+    local tag=$(echo "$1" | sed -e "s/^v//")
+    local major="null"
+    local minor="null"
+    local patch="null"
+
+    if egrep '^[0-9]+\.[0-9]+\.[0-9]+' <<<"$tag" >/dev/null 2>&1; then
+        local n=${tag//[!0-9]/ }
+        local a=(${n//\./ })
+        major=${a[0]}
+        minor=${a[1]}
+        patch=${a[2]}
+    fi
+
+    if [ "$major" = "null" ] || [ "$minor" = "null" ] || [ "$patch" = "null" ]; then
+        echo "null"
+    else
+        echo "$major $minor $patch"
+    fi
+}
+
 append_data_for_repository() {
     local repo="$1"
     local cache="$2"
@@ -53,7 +74,7 @@ run() {
 
     clear
 
-    repository=$(gum table --columns="Repository","Description","Latest Tag","Published","Changes since ⬅" --widths=20,30,15,15,16 <<<"$csv" | cut -d ',' -f1)
+    repository=$(gum table --columns="Repository","Description","Latest Tag","Published","Changes since ⬅" --widths=20,30,15,15,16 --height=20 <<<"$csv" | cut -d ',' -f1)
 
     if [ -z $repository ]; then
         exit 1
@@ -79,10 +100,35 @@ run() {
         open "https://github.com/$repository/compare/$tag...$default_branch"
         ;;
     "Draft new release")
-        open "https://github.com/$repository/releases/new"
+        tag=$(echo $list | jq -r '.[] | select(.name=="'"$repository"'") | .latest_tag')
+
+        semver=($(parse_semver "$tag"))
+
+        if [[ "$semver" == "null" ]]; then
+            open "https://github.com/$repository/releases/new"
+        else
+            major=${semver[0]}
+            minor=${semver[1]}
+            patch=${semver[2]}
+
+            prefix=$([[ $tag == v* ]] && echo "v" || echo "")
+
+            echo "What kind of $(pink "$release")?"
+            release_type=$(gum choose --selected=Minor "Major" "Minor" "Patch")
+
+            clear
+
+            case $release_type in
+            "Major") version="$prefix$((major + 1)).0.0" ;;
+            "Minor") version="$prefix$major.$((minor + 1)).0" ;;
+            "Patch") version="$prefix$major.$minor.$((patch + 1))" ;;
+            *) exit 1 ;;
+            esac
+
+            open "https://github.com/$repository/releases/new?tag=$version&title=$version"
+        fi
         ;;
     *) exit 1 ;;
-
     esac
 
     gum confirm "Do you want to see the list again?" &&

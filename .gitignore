@@ -1,0 +1,6 @@
+**/.metals
+**/.bsp
+**/*.build_artifacts.txt
+**/prefs.plist
+**/permutive
+*.alfredworkflow
